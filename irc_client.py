@@ -16,9 +16,10 @@ class IRCMessage:
     """
     IRC message parser.
     """
-
+    # This parser implemented basic parts in RFC1459, RFC2812 and IRCv3.
     # Compatible with IRCv3 tags.
     GRAM = r'(@(?P<tags>[^\s]*) )?(:(?P<prefix>[^\s]*) )?(?P<command>[a-zA-Z0-9]*)(?P<params>( [^ :\r\n][^ \r\n]*)*)( :(?P<trailing>[^\r\n]*))?(\r\n)?'
+    GRAM_PREFIX = r'(?P<nickname>[^!@]*)((!(?P<user>[^!@]*))?@(?P<host>[^!@]*))?'
 
     def __init__(self, message:str) -> None:
         matches = re.match(IRCMessage.GRAM, message)
@@ -27,6 +28,12 @@ class IRCMessage:
         self.command = matches.group("command")
         self.params = matches.group("params").split() if matches.group("params") else None
         self.trailing = matches.group("trailing")
+
+        if self.prefix:
+            prefix = re.match(IRCMessage.GRAM_PREFIX, self.prefix)
+            self.nickname = prefix.group("nickname")
+            self.user = prefix.group("user")
+            self.host = prefix.group("host")
 
     def __getitem__(self, key):
         return self.__dict__.get(key, None)
@@ -46,12 +53,16 @@ class IRCClient:
         self.host = kwargs.get("host", server)
 
         # Watchdog settings.
-        self.ping_interval = kwargs.get('ping_interval', 10)
+        self.ping_interval = kwargs.get('ping_interval', 30)
         self.max_awaiting_ping = kwargs.get('max_awaiting_ping', 3)
         self.awaiting_ping = 0
 
         # Message callback.
         self.message_callback = callback or (lambda x: None)
+
+        # On connect callback function.
+        # NOTE: This function will be called before joining channels.
+        self.connected_callback = kwargs.get("on_connect", lambda: None)
 
         # Asyncio event loop.
         self.loop = loop or asyncio.get_event_loop()
@@ -138,6 +149,9 @@ class IRCClient:
         self.reader_loop_task = self.loop.create_task(self.reader_loop())
         self.writer_loop_task = self.loop.create_task(self.writer_loop())
         self.watchdog_ping_task = self.loop.create_task(self.watchdog_ping_writer())
+
+        # Call on_connect callback.
+        self.connected_callback()
 
         # Rejoin channel.
         for _ch in self.channels:
